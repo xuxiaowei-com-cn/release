@@ -31,6 +31,8 @@ jobs:
         env:
           PLATFORMS: linux/loong64
           REGISTRY: registry.cn-qingdao.aliyuncs.com/xuxiaoweicomcn
+          DISTROLESS_REGISTRY: ghcr.io/loong64
+          DISTROLESS_IMAGE: debian
         run: |
           cd images/build/go-runner
           make push
