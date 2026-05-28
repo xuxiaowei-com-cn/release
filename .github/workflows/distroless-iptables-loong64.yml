@@ -1,0 +1,43 @@
+name: distroless-iptables-loong64
+
+on:
+  push:
+    paths:
+      - 'images/build/distroless-iptables/**'
+      - '.github/workflows/distroless-iptables-loong64.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: loongarch64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Login to Docker
+        uses: docker/login-action@v4
+        with:
+          registry: registry.cn-qingdao.aliyuncs.com
+          username: ${{ vars.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Build and push distroless-iptables image for loong64
+        env:
+          ARCH: loong64
+          QEMUIMAGE: xfan1024/qemu-user-static
+          QEMUVERSION: latest
+          QEMUFLAGS:
+          BASEIMAGE: ghcr.io/loong64/debian:trixie-slim
+          DISTROLESS_BASEIMAGE: ghcr.io/loong64/debian
+          REGISTRY: registry.cn-qingdao.aliyuncs.com/xuxiaoweicomcn
+          IMAGE_VERSION: v0.9.1
+          GORUNNERIMAGE: registry.cn-qingdao.aliyuncs.com/xuxiaoweicomcn/go-runner-loong64:v2.4.0-go1.26.2-bookworm.0
+        run: |
+          cd images/build/distroless-iptables
+          make push

@@ -14,6 +14,7 @@
 
 ARG BASEIMAGE
 ARG GORUNNERIMAGE
+ARG DISTROLESS_BASEIMAGE=gcr.io/distroless/base-debian12
 # Using directly debian base, as we are going to just copy the required binaries
 FROM ${BASEIMAGE} as build
 
@@ -51,7 +52,7 @@ FROM ${GORUNNERIMAGE} as gorunner
 
 # We need to use distroless:base here as tzdata, glibc and some other base packages
 # are required
-FROM gcr.io/distroless/base-debian12 as intermediate
+FROM ${DISTROLESS_BASEIMAGE} as intermediate
 
 ARG SKIP_WRAPPER_CHECK
 
