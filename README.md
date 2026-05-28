@@ -1,6 +1,11 @@
 # 项目介绍
 
-- 本项目用于构建 Kubernetes 构建时所需的镜像
+- 本项目用于构建 Kubernetes `linux/loong64` 编译过程所需的基础镜像
+
+- 用于构建以下 Docker `linux/loong64` 镜像（以 kubernetes v1.31.1 为例）：
+    - `registry.k8s.io/build-image/go-runner:v2.4.0-go1.26.2-bookworm.0`
+    - `registry.k8s.io/build-image/distroless-iptables:v0.9.1`
+    - `registry.k8s.io/build-image/debian-base-loong64:bookworm-v1.0.6`
 
 # 分支介绍
 
