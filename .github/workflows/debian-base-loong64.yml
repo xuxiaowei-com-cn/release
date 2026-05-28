@@ -32,6 +32,7 @@ jobs:
           ARCH: loong64
           QEMUIMAGE: xfan1024/qemu-user-static
           QEMUVERSION: latest
+          QEMUFLAGS:
         run: |
           cd images/build/debian-base
           make push
