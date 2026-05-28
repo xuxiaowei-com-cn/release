@@ -33,6 +33,7 @@ jobs:
           REGISTRY: registry.cn-qingdao.aliyuncs.com/xuxiaoweicomcn
           DISTROLESS_REGISTRY: ghcr.io/loong64
           DISTROLESS_IMAGE: debian
+          IMAGE_VERSION: v2.4.0-go1.26.2-bookworm.0
         run: |
           cd images/build/go-runner
           make push
