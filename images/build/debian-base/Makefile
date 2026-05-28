@@ -26,7 +26,7 @@ TAR_FILE ?= rootfs.tar
 ARCH ?= amd64
 ALL_ARCH = amd64 arm arm64 ppc64le s390x
 
-QEMUVERSION=7.2.0-1
+QEMUVERSION ?= 7.2.0-1
 QEMUIMAGE ?= multiarch/qemu-user-static
 
 # This option is for running docker manifest command
