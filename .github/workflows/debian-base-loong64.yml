@@ -30,6 +30,8 @@ jobs:
       - name: Build and push debian-base image for loong64
         env:
           ARCH: loong64
+          QEMUIMAGE: xfan1024/qemu-user-static
+          QEMUVERSION: latest
         run: |
           cd images/build/debian-base
           make push
