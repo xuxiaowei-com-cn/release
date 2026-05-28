@@ -35,6 +35,7 @@ jobs:
           QEMUFLAGS:
           BASEIMAGE: ghcr.io/loong64/debian:trixie-slim
           REGISTRY: registry.cn-qingdao.aliyuncs.com/xuxiaoweicomcn
+          IMAGE_VERSION: bookworm-v1.0.6
         run: |
           cd images/build/debian-base
           make push
