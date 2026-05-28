@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY || 'registry.cn-qingdao.aliyuncs.com' }}
+      DOCKER_NAMESPACE: ${{ vars.DOCKER_NAMESPACE || 'xuxiaoweicomcn' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -24,7 +27,7 @@ jobs:
       - name: Login to Docker
         uses: docker/login-action@v4
         with:
-          registry: registry.cn-qingdao.aliyuncs.com
+          registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ vars.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Build and push debian-base image for loong64
@@ -34,7 +37,7 @@ jobs:
           QEMUVERSION: latest
           QEMUFLAGS:
           BASEIMAGE: ghcr.io/loong64/debian:trixie-slim
-          REGISTRY: registry.cn-qingdao.aliyuncs.com/xuxiaoweicomcn
+          REGISTRY: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}
           IMAGE_VERSION: bookworm-v1.0.6
         run: |
           cd images/build/debian-base
