@@ -36,6 +36,10 @@ stage_file() {
     from="${1}"
     if [[ $from = /lib*/* ]]; then
         from="/usr$from"
+    elif [[ $from = /bin/* ]]; then
+        from="/usr$from"
+    elif [[ $from = /sbin/* ]]; then
+        from="/usr$from"
     fi
     cp -a --parents "${from}" "${2}"
     # recursively follow symlinks
