@@ -34,6 +34,7 @@ jobs:
           QEMUVERSION: latest
           QEMUFLAGS:
           BASEIMAGE: ghcr.io/loong64/debian:trixie-slim
+          REGISTRY: registry.cn-qingdao.aliyuncs.com/xuxiaoweicomcn
         run: |
           cd images/build/debian-base
           make push
