@@ -33,6 +33,7 @@ jobs:
           QEMUIMAGE: xfan1024/qemu-user-static
           QEMUVERSION: latest
           QEMUFLAGS:
+          BASEIMAGE: ghcr.io/loong64/debian:trixie-slim
         run: |
           cd images/build/debian-base
           make push
