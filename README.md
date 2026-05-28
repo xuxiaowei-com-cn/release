@@ -1,0 +1,11 @@
+# 项目介绍
+
+- 本项目用于构建 Kubernetes 构建时所需的镜像
+
+# 分支介绍
+
+- 此处未介绍的分支，请勿关注
+
+| 分支                         | [kubernetes/release](https://github.com/kubernetes/release) 标签 | [kubernetes/kubernetes](https://github.com/kubernetes/kubernetes) 标签 |
+|----------------------------|----------------------------------------------------------------|----------------------------------------------------------------------|
+| v0.21.1-kubernetes-v1.31.1 | v0.21.1                                                        | v1.31.1                                                              |
