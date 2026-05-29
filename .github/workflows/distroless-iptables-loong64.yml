@@ -12,7 +12,7 @@ jobs:
     permissions:
       contents: read
     env:
-      DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY || 'registry.cn-qingdao.aliyuncs.com' }}
+      DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY || 'docker.io' }}
       DOCKER_NAMESPACE: ${{ vars.DOCKER_NAMESPACE || 'xuxiaoweicomcn' }}
       HAS_PUSH: ${{ secrets.DOCKER_PASSWORD != '' }}
     steps:
