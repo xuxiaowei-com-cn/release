@@ -21,7 +21,6 @@ TAG ?= $(shell git describe --tags --always --dirty)
 IMAGE_VERSION ?= v0.8.9
 CONFIG ?= distroless-bookworm
 BASEIMAGE ?= debian:bookworm-slim
-DISTROLESS_BASEIMAGE ?= gcr.io/distroless/base-debian12
 GORUNNER_VERSION ?= v2.4.0-go1.25.9-bookworm.0
 
 ARCH?=amd64
@@ -31,9 +30,8 @@ BASE_REGISTRY?=registry.k8s.io/build-image
 
 GORUNNERIMAGE?=$(BASE_REGISTRY)/go-runner:$(GORUNNER_VERSION)
 
-QEMUVERSION ?= 7.2.0-1
+QEMUVERSION=7.2.0-1
 QEMUIMAGE ?= multiarch/qemu-user-static
-QEMUFLAGS ?= --reset -p yes
 
 ifneq ($(ARCH), amd64)
 	SKIP_WRAPPER_CHECK=--no-sanity-check
@@ -49,7 +47,7 @@ build:
 	umask 0022
 
 	# Enable execution of multi-architecture containers
-	docker run --rm --privileged $(QEMUIMAGE):$(QEMUVERSION) $(QEMUFLAGS)
+	docker run --rm --privileged $(QEMUIMAGE):$(QEMUVERSION) --reset -p yes
 	docker buildx version
 	BUILDER=$(shell docker buildx create --use)
 	docker buildx build \
@@ -61,7 +59,6 @@ build:
 		-t $(IMAGE)-$(ARCH):latest-$(CONFIG) \
 		--build-arg=BASEIMAGE=$(BASEIMAGE) \
 		--build-arg=GORUNNERIMAGE=$(GORUNNERIMAGE) \
-		--build-arg=DISTROLESS_BASEIMAGE=$(DISTROLESS_BASEIMAGE) \
 		--build-arg=SKIP_WRAPPER_CHECK=$(SKIP_WRAPPER_CHECK) \
 		$(CONFIG)
 	docker buildx rm $$BUILDER
