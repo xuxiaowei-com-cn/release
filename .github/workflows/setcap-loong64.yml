@@ -44,3 +44,13 @@ jobs:
         run: |
           cd images/build/setcap
           if [ "$HAS_PUSH" = "true" ]; then make push; else make; fi
+      - name: Sync setcap-loong64 to setcap
+        if: ${{ env.HAS_PUSH == 'true' }}
+        env:
+          REGISTRY: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}
+        run: |
+          SRC_IMAGE="${REGISTRY}/setcap-loong64:bookworm-v1.0.6"
+          DST_IMAGE="${REGISTRY}/setcap:bookworm-v1.0.6"
+          docker pull --platform linux/loong64 "${SRC_IMAGE}"
+          docker tag "${SRC_IMAGE}" "${DST_IMAGE}"
+          docker push "${DST_IMAGE}"
