@@ -42,3 +42,13 @@ jobs:
         run: |
           cd images/build/go-runner
           if [ "$HAS_PUSH" = "true" ]; then make push; else make; fi
+      - name: Sync go-runner-loong64 to go-runner
+        if: ${{ env.HAS_PUSH == 'true' }}
+        env:
+          REGISTRY: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}
+        run: |
+          SRC_IMAGE="${REGISTRY}/go-runner-loong64:v2.4.0-go1.26.2-bookworm-slim.0"
+          DST_IMAGE="${REGISTRY}/go-runner:v2.4.0-go1.26.2-bookworm.0"
+          docker pull --platform linux/loong64 "${SRC_IMAGE}"
+          docker tag "${SRC_IMAGE}" "${DST_IMAGE}"
+          docker push "${DST_IMAGE}"
