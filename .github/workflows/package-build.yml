@@ -5,11 +5,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Kubernetes version (e.g. 1.36.1)"
+        description: "Kubernetes version (e.g. 1.32.0)"
         required: true
         type: string
       packages:
-        description: "Packages to build (JSON array: [\"kubeadm\",\"kubelet\",\"kubectl\",\"cri-tools\",\"kubernetes-cni\"])"
+        description: "Packages (JSON array)"
         default: '["kubeadm","kubelet","kubectl","cri-tools","kubernetes-cni"]'
         type: string
       revision:
@@ -20,260 +20,203 @@ on:
         description: "Architectures (comma-separated: amd64,arm64,ppc64le,s390x)"
         default: "amd64"
         type: string
-      channel:
-        description: "Channel"
-        default: "release"
-        type: choice
-        options:
-          - release
-          - prerelease
-          - nightly
-  pull_request:
-    branches:
-      - master
-    paths:
-      - "cmd/krel/templates/latest/**"
-      - "pkg/obs/**"
-      - "hack/verify-package-specs.sh"
 
 permissions:
   contents: read
 
 jobs:
-  # Quick validation for PRs: generate spec files only, run rpmlint
-  validate-specs:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
-        with:
-          disable-sudo: true
-          egress-policy: audit
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version-file: go.mod
-          check-latest: true
-
-      - name: Install rpmlint
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq rpmlint
-
-      - name: Build krel
-        run: go build -o bin/krel ./cmd/krel
-
-      - name: Generate and validate specs
-        run: |
-          set -o errexit
-          set -o nounset
-          set -o pipefail
-
-          TEMPLATE_DIR="cmd/krel/templates/latest"
-          OUTPUT_DIR="output/specs"
-          mkdir -p "${OUTPUT_DIR}"
-
-          for pkg in kubeadm kubelet kubectl cri-tools kubernetes-cni; do
-            echo "::group::Generating spec for ${pkg}"
-            bin/krel obs specs \
-              --spec-only \
-              --package="${pkg}" \
-              --template-dir="${TEMPLATE_DIR}" \
-              --output="${OUTPUT_DIR}"
-
-            echo "Running rpmlint on ${pkg}.spec"
-            rpmlint_args=()
-            if [[ -f "${OUTPUT_DIR}/${pkg}.rpmlintrc" ]]; then
-              rpmlint_args=(-r "${OUTPUT_DIR}/${pkg}.rpmlintrc")
-            fi
-            rpmlint "${OUTPUT_DIR}/${pkg}.spec" "${rpmlint_args[@]}" -v
-            echo "::endgroup::"
-          done
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: validated-specs
-          path: output/specs/
-
-  # Generate spec files + download binaries + create .orig.tar.gz archives
-  generate-packages:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    strategy:
-      matrix:
-        package: ${{ fromJSON(inputs.packages) }}
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
-        with:
-          disable-sudo: true
-          egress-policy: audit
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version-file: go.mod
-          check-latest: true
-
-      - name: Build krel
-        run: go build -o bin/krel ./cmd/krel
-
-      - name: Generate specs and download artifacts
-        run: |
-          set -o errexit
-          set -o nounset
-          set -o pipefail
-
-          OUTPUT_DIR="output/${{ matrix.package }}"
-          mkdir -p "${OUTPUT_DIR}"
-
-          bin/krel obs specs \
-            --package="${{ matrix.package }}" \
-            --version="${{ inputs.version }}" \
-            --revision="${{ inputs.revision }}" \
-            --architectures="${{ inputs.architectures }}" \
-            --channel="${{ inputs.channel }}" \
-            --template-dir="cmd/krel/templates/latest" \
-            --output="${OUTPUT_DIR}"
-
-          echo "=== Generated files ==="
-          find "${OUTPUT_DIR}" -type f -exec ls -lh {} \;
-
-      - name: Upload generated package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ matrix.package }}-${{ inputs.version }}
-          path: output/${{ matrix.package }}/
-
-  # Build RPM packages on Fedora using the OBS-compatible spec files
+  # ── RPM packages ───────────────────────────────────────────────────
   build-rpm:
-    if: github.event_name == 'workflow_dispatch'
-    needs: generate-packages
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     strategy:
       matrix:
         package: ${{ fromJSON(inputs.packages) }}
     container:
       image: fedora:latest
     steps:
-      - name: Install RPM build tools
-        run: |
-          dnf install -y \
-            rpm-build \
-            rpmdevtools \
-            rpmlint \
-            systemd-rpm-macros
-
-      - name: Download generated package
-        uses: actions/download-artifact@65d1ffb3e96ef5d3e9acd62a6d06be69336e0224 # v6.1.1
-        with:
-          name: ${{ matrix.package }}-${{ inputs.version }}
-          path: /__w/rpm-src/
-
-      - name: Prepare RPM build tree
-        run: |
-          set -o errexit
-          set -o nounset
-          set -o pipefail
-
-          cd /__w/rpm-src/
-
-          # Extract the .orig.tar.gz (spec expects extracted source via %setup -q -c)
-          ARCHIVE=$(ls *.orig.tar.gz 2>/dev/null || true)
-          if [[ -n "${ARCHIVE}" ]]; then
-            tar xzf "${ARCHIVE}"
-          fi
-
-          rpmdev-setuptree
-
-          # Copy files into the rpmbuild tree
-          cp -v *.spec ~/rpmbuild/SPECS/
-          cp -v *.orig.tar.gz ~/rpmbuild/SOURCES/ 2>/dev/null || true
-          cp -v *.service ~/rpmbuild/SOURCES/ 2>/dev/null || true
-          cp -v *.env ~/rpmbuild/SOURCES/ 2>/dev/null || true
-          cp -v *.conf ~/rpmbuild/SOURCES/ 2>/dev/null || true
-          cp -v *.rpmlintrc ~/rpmbuild/SOURCES/ 2>/dev/null || true
-          cp -v LICENSE ~/rpmbuild/SOURCES/ 2>/dev/null || true
-          cp -v README.md ~/rpmbuild/SOURCES/ 2>/dev/null || true
-
-          # For non-core packages, the archive structure differs;
-          # copy any extracted directories as sources
-          find . -mindepth 1 -maxdepth 1 -type d ! -name '.' \
-            -exec cp -rv {} ~/rpmbuild/SOURCES/ \; 2>/dev/null || true
-
-      - name: Patch spec for standard rpmbuild
-        run: |
-          cd ~/rpmbuild/SPECS/
-          SPEC_FILE=$(ls *.spec)
-
-          # Remove debbuild-specific conditional blocks
-          sed -i '/^%if "%{_vendor}" == "debbuild"/,/^%endif$/{
-            /^%if/d
-            /^%endif/d
-            /touch.*\.keep$/d
-            /%config.*\/default\//d
-            /%{_sysconfdir}\/default\//{s|%{_sysconfdir}/default/|%{_sysconfdir}/sysconfig/|}
-            s|mkdir -p %{buildroot}%{_sysconfdir}/default/|mkdir -p %{buildroot}%{_sysconfdir}/sysconfig/|
-            s|install -p -m 644 -T kubelet.env %{buildroot}%{_sysconfdir}/default/kubelet|install -p -m 644 -T kubelet.env %{buildroot}%{_sysconfdir}/sysconfig/kubelet|
-            /sed -i.*10-kubeadm/d
-          }' "${SPEC_FILE}"
-
-          # Remove leftover debbuild references
-          sed -i 's/BuildRequires: systemd-deb-macros/BuildRequires: systemd-rpm-macros/g' "${SPEC_FILE}"
-          sed -i '/^Group:/d' "${SPEC_FILE}"
-          sed -i '/^Requires: mount$/d' "${SPEC_FILE}"
-
-          echo "=== Patched spec file ==="
-          cat "${SPEC_FILE}"
+      - name: Install tools
+        run: dnf install -y rpm-build rpmdevtools systemd-rpm-macros tar gzip curl
 
       - name: Build RPM
+        env:
+          PKG: ${{ matrix.package }}
+          VER: ${{ inputs.version }}
+          REV: ${{ inputs.revision }}
+          ARCHS: ${{ inputs.architectures }}
         run: |
-          cd ~/rpmbuild
-          SPEC_FILE=$(ls SPECS/*.spec)
+          set -o errexit -o nounset -o pipefail
 
-          rpmbuild -ba "${SPEC_FILE}" \
-            --define "_topdir $(pwd)" \
-            --define "debug_package %{nil}" \
-            2>&1 | tee build.log || true
+          for goarch in ${ARCHS//,/ }; do
+            case "${goarch}" in
+              amd64)   rpmarch="x86_64" ;;
+              arm64)   rpmarch="aarch64" ;;
+              ppc64le) rpmarch="ppc64le" ;;
+              s390x)   rpmarch="s390x" ;;
+              *)       rpmarch="${goarch}" ;;
+            esac
 
-          echo "=== Build log tail ==="
-          tail -50 build.log
+            echo "::group:: ${PKG}-${VER}-${REV}.${rpmarch}"
 
-          echo "=== Built RPMs ==="
-          find RPMS/ -type f 2>/dev/null || echo "No binary RPMs"
-          find SRPMS/ -type f 2>/dev/null || echo "No source RPMs"
+            # ── download ──────────────────────────────────────────
+            SRC_DIR=~/rpmbuild/BUILD/${PKG}-${VER}
+            rm -rf "${SRC_DIR}"
+            mkdir -p "${SRC_DIR}/${rpmarch}"
 
-      - name: Upload RPM artifacts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+            case "${PKG}" in
+              kubeadm|kubelet|kubectl)
+                URL="https://dl.k8s.io/release/v${VER}/bin/linux/${goarch}/${PKG}"
+                curl -sSfL --retry 5 -o "${SRC_DIR}/${rpmarch}/${PKG}" "${URL}"
+                chmod 755 "${SRC_DIR}/${rpmarch}/${PKG}"
+                ;;
+              cri-tools)
+                URL="https://github.com/kubernetes-sigs/cri-tools/releases/download/v${VER}/crictl-v${VER}-linux-${goarch}.tar.gz"
+                curl -sSfL --retry 5 -o /tmp/cri.tar.gz "${URL}"
+                tar xzf /tmp/cri.tar.gz -C "${SRC_DIR}/${rpmarch}/" crictl
+                ;;
+              kubernetes-cni)
+                URL="https://github.com/containernetworking/plugins/releases/download/v${VER}/cni-plugins-linux-${goarch}-v${VER}.tgz"
+                curl -sSfL --retry 5 -o /tmp/cni.tgz "${URL}"
+                tar xzf /tmp/cni.tgz -C "${SRC_DIR}/${rpmarch}/"
+                ;;
+            esac
+            echo "Downloaded: ${URL}"
+
+            # ── support files ──────────────────────────────────────
+            if [ "${PKG}" = "kubelet" ]; then
+              cat > "${SRC_DIR}/kubelet.service" << 'UNIT'
+          [Unit]
+          Description=kubelet: The Kubernetes Node Agent
+          Documentation=https://kubernetes.io/docs/
+          Wants=network-online.target
+          After=network-online.target
+          [Service]
+          ExecStart=/usr/bin/kubelet
+          Restart=always
+          StartLimitInterval=0
+          RestartSec=10
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+              echo "KUBELET_EXTRA_ARGS=" > "${SRC_DIR}/kubelet.env"
+            fi
+
+            if [ "${PKG}" = "kubeadm" ]; then
+              cat > "${SRC_DIR}/10-kubeadm.conf" << 'CONF'
+          [Service]
+          Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"
+          Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"
+          EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
+          EnvironmentFile=-/etc/sysconfig/kubelet
+          ExecStart=
+          ExecStart=/usr/bin/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS $KUBELET_KUBEADM_ARGS $KUBELET_EXTRA_ARGS
+          CONF
+            fi
+
+            # ── write spec ─────────────────────────────────────────
+            RPM_VER="${VER//-/\~}"
+            SPEC=~/rpmbuild/SPECS/${PKG}.spec
+            cat > "${SPEC}" << EOF
+          %global debug_package %{nil}
+
+          Name: ${PKG}
+          Version: ${RPM_VER}
+          Release: ${REV}
+          Summary: ${PKG} - Kubernetes component
+          License: Apache-2.0
+          URL: https://kubernetes.io
+          BuildArch: ${rpmarch}
+
+          %description
+          Kubernetes component: ${PKG}.
+
+          %prep
+
+          %build
+
+          %install
+          mkdir -p %{buildroot}%{_bindir}
+          install -p -m 755 %{_builddir}/${PKG}-${VER}/${rpmarch}/${PKG} %{buildroot}%{_bindir}/
+          EOF
+
+            # append package-specific sections
+            case "${PKG}" in
+              kubelet)
+                cat >> "${SPEC}" << 'EOF'
+          mkdir -p %{buildroot}%{_unitdir}
+          mkdir -p %{buildroot}%{_sysconfdir}/sysconfig/
+          install -p -m 644 %{_builddir}/kubelet-%{version}/kubelet.service %{buildroot}%{_unitdir}/kubelet.service
+          install -p -m 644 %{_builddir}/kubelet-%{version}/kubelet.env %{buildroot}%{_sysconfdir}/sysconfig/kubelet
+          EOF
+                ;;
+              kubeadm)
+                cat >> "${SPEC}" << 'EOF'
+          mkdir -p %{buildroot}%{_unitdir}/kubelet.service.d/
+          install -p -m 644 %{_builddir}/kubeadm-%{version}/10-kubeadm.conf %{buildroot}%{_unitdir}/kubelet.service.d/10-kubeadm.conf
+          EOF
+                ;;
+              cri-tools)
+                cat >> "${SPEC}" << 'EOF'
+          mv %{buildroot}%{_bindir}/crictl %{buildroot}%{_bindir}/crictl
+          EOF
+                ;;
+            esac
+
+            cat >> "${SPEC}" << EOF
+
+          %files
+          %{_bindir}/*
+          EOF
+
+            case "${PKG}" in
+              kubelet)
+                cat >> "${SPEC}" << 'EOF'
+          %{_unitdir}/kubelet.service
+          %config(noreplace) %{_sysconfdir}/sysconfig/kubelet
+          %post
+          %systemd_post kubelet.service
+          %preun
+          %systemd_preun kubelet.service
+          %postun
+          %systemd_postun kubelet.service
+          EOF
+                ;;
+              kubeadm)
+                cat >> "${SPEC}" << 'EOF'
+          %dir %{_unitdir}/kubelet.service.d
+          %{_unitdir}/kubelet.service.d/10-kubeadm.conf
+          EOF
+                ;;
+            esac
+
+            cat >> "${SPEC}" << EOF
+
+          %changelog
+          * $(date +"%a %b %d %Y") Kubernetes Authors <dev@kubernetes.io> - ${RPM_VER}-${REV}
+          - Kubernetes ${VER} release
+          EOF
+
+            # ── build ─────────────────────────────────────────────
+            rpmdev-setuptree
+            rpmbuild -ba "${SPEC}" --define "_topdir ${HOME}/rpmbuild" 2>&1 | tail -30
+
+            mkdir -p /tmp/rpms
+            find ~/rpmbuild/RPMS -name "*.rpm" -exec cp -v {} /tmp/rpms/ \;
+            find ~/rpmbuild/SRPMS -name "*.rpm" -exec cp -v {} /tmp/rpms/ \;
+
+            echo "::endgroup::"
+          done
+
+          echo "=== RPMs ==="
+          ls -lh /tmp/rpms/
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.package }}-${{ inputs.version }}-rpm
-          path: |
-            /root/rpmbuild/RPMS/
-            /root/rpmbuild/SRPMS/
+          path: /tmp/rpms/
 
-  # Build DEB packages: uses the downloaded binary + generates proper debian/ structure
+  # ── DEB packages ───────────────────────────────────────────────────
   build-deb:
-    if: github.event_name == 'workflow_dispatch'
-    needs: generate-packages
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     strategy:
       matrix:
         package: ${{ fromJSON(inputs.packages) }}
@@ -284,113 +227,129 @@ jobs:
           disable-sudo: false
           egress-policy: audit
 
-      - name: Download generated package
-        uses: actions/download-artifact@65d1ffb3e96ef5d3e9acd62a6d06be69336e0224 # v6.1.1
-        with:
-          name: ${{ matrix.package }}-${{ inputs.version }}
-          path: pkg-src/
-
-      - name: Install DEB build tools
+      - name: Build DEB
+        env:
+          PKG: ${{ matrix.package }}
+          VER: ${{ inputs.version }}
+          REV: ${{ inputs.revision }}
+          ARCHS: ${{ inputs.architectures }}
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            build-essential \
-            devscripts \
-            debhelper
+          set -o errexit -o nounset -o pipefail
 
-      - name: Build DEB package
-        run: |
-          set -o errexit
-          set -o nounset
-          set -o pipefail
+          for goarch in ${ARCHS//,/ }; do
+            case "${goarch}" in
+              amd64)   debarch="amd64"   ; bin_dir="x86_64" ;;
+              arm64)   debarch="arm64"   ; bin_dir="aarch64" ;;
+              ppc64le) debarch="ppc64el" ; bin_dir="ppc64le" ;;
+              s390x)   debarch="s390x"   ; bin_dir="s390x" ;;
+              *)       debarch="${goarch}" ; bin_dir="${goarch}" ;;
+            esac
 
-          cd pkg-src/
+            echo "::group:: ${PKG}_${VER}-${REV}_${debarch}.deb"
 
-          PKG_NAME="${{ matrix.package }}"
-          VERSION="${{ inputs.version }}"
-          REVISION="${{ inputs.revision }}"
-          ARCH=$(dpkg --print-architecture)
+            BUILD_DIR="/tmp/${PKG}-deb-${debarch}"
+            rm -rf "${BUILD_DIR}"
+            mkdir -p "${BUILD_DIR}/DEBIAN" "${BUILD_DIR}/usr/bin"
 
-          # OBS arch mapping (Go arch -> OBS arch)
-          case "${ARCH}" in
-            amd64)   BIN_ARCH="x86_64" ;;
-            arm64)   BIN_ARCH="aarch64" ;;
-            ppc64el) BIN_ARCH="ppc64le" ;;
-            s390x)   BIN_ARCH="s390x" ;;
-            *)       BIN_ARCH="${ARCH}" ;;
-          esac
+            # ── download ──────────────────────────────────────────
+            case "${PKG}" in
+              kubeadm|kubelet|kubectl)
+                URL="https://dl.k8s.io/release/v${VER}/bin/linux/${goarch}/${PKG}"
+                curl -sSfL --retry 5 -o "${BUILD_DIR}/usr/bin/${PKG}" "${URL}"
+                chmod 755 "${BUILD_DIR}/usr/bin/${PKG}"
+                ;;
+              cri-tools)
+                URL="https://github.com/kubernetes-sigs/cri-tools/releases/download/v${VER}/crictl-v${VER}-linux-${goarch}.tar.gz"
+                curl -sSfL --retry 5 -o /tmp/cri.tar.gz "${URL}"
+                tar xzf /tmp/cri.tar.gz -C "${BUILD_DIR}/usr/bin/" crictl
+                ;;
+              kubernetes-cni)
+                URL="https://github.com/containernetworking/plugins/releases/download/v${VER}/cni-plugins-linux-${goarch}-v${VER}.tgz"
+                mkdir -p "${BUILD_DIR}/opt/cni/bin"
+                curl -sSfL --retry 5 -o /tmp/cni.tgz "${URL}"
+                tar xzf /tmp/cni.tgz -C "${BUILD_DIR}/opt/cni/bin/"
+                ;;
+            esac
+            echo "Downloaded: ${URL}"
 
-          # Extract the orig tarball
-          if ls *.orig.tar.gz 1>/dev/null 2>&1; then
-            tar xzf *.orig.tar.gz
-          fi
+            # ── support files ────────────────────────────────────
 
-          DEB_VERSION="${VERSION}-${REVISION}"
-          BUILD_DIR="/tmp/${PKG_NAME}-deb"
-
-          # Create package root
-          mkdir -p "${BUILD_DIR}/DEBIAN"
-          mkdir -p "${BUILD_DIR}/usr/bin"
-
-          # Copy the binary
-          if [[ -f "${BIN_ARCH}/${PKG_NAME}" ]]; then
-            cp -v "${BIN_ARCH}/${PKG_NAME}" "${BUILD_DIR}/usr/bin/"
-          else
-            echo "WARNING: binary ${BIN_ARCH}/${PKG_NAME} not found"
-            echo "Available files:"
-            find . -type f
-          fi
-
-          # kubelet-specific: systemd unit + env file
-          if [[ "${PKG_NAME}" == "kubelet" ]]; then
-            mkdir -p "${BUILD_DIR}/lib/systemd/system"
-            mkdir -p "${BUILD_DIR}/etc/default"
-            if [[ -f kubelet.service ]]; then
-              cp -v kubelet.service "${BUILD_DIR}/lib/systemd/system/"
+            if [ "${PKG}" = "kubelet" ]; then
+              mkdir -p "${BUILD_DIR}/lib/systemd/system" "${BUILD_DIR}/etc/default"
+              cat > "${BUILD_DIR}/lib/systemd/system/kubelet.service" << 'UNIT'
+          [Unit]
+          Description=kubelet: The Kubernetes Node Agent
+          Documentation=https://kubernetes.io/docs/
+          Wants=network-online.target
+          After=network-online.target
+          [Service]
+          ExecStart=/usr/bin/kubelet
+          Restart=always
+          StartLimitInterval=0
+          RestartSec=10
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+              echo "KUBELET_EXTRA_ARGS=" > "${BUILD_DIR}/etc/default/kubelet"
+              echo "/etc/default/kubelet" >> "${BUILD_DIR}/DEBIAN/conffiles"
             fi
-            if [[ -f kubelet.env ]]; then
-              cp -v kubelet.env "${BUILD_DIR}/etc/default/kubelet"
-            fi
-          fi
 
-          # kubeadm-specific: systemd drop-in
-          if [[ "${PKG_NAME}" == "kubeadm" ]]; then
-            mkdir -p "${BUILD_DIR}/lib/systemd/system/kubelet.service.d"
-            if [[ -f 10-kubeadm.conf ]]; then
-              sed 's|/etc/sysconfig/kubelet|/etc/default/kubelet|g' 10-kubeadm.conf \
-                > "${BUILD_DIR}/lib/systemd/system/kubelet.service.d/10-kubeadm.conf"
+            if [ "${PKG}" = "kubeadm" ]; then
+              mkdir -p "${BUILD_DIR}/lib/systemd/system/kubelet.service.d"
+              cat > "${BUILD_DIR}/lib/systemd/system/kubelet.service.d/10-kubeadm.conf" << 'CONF'
+          [Service]
+          Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"
+          Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"
+          EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
+          EnvironmentFile=-/etc/default/kubelet
+          ExecStart=
+          ExecStart=/usr/bin/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS $KUBELET_KUBEADM_ARGS $KUBELET_EXTRA_ARGS
+          CONF
             fi
-          fi
 
-          # DEBIAN/control
-          cat > "${BUILD_DIR}/DEBIAN/control" << CTRL
-          Package: ${PKG_NAME}
-          Version: ${DEB_VERSION}
+            # ── control ──────────────────────────────────────────
+            cat > "${BUILD_DIR}/DEBIAN/control" << EOF
+          Package: ${PKG}
+          Version: ${VER}-${REV}
           Section: admin
           Priority: optional
-          Architecture: ${ARCH}
+          Architecture: ${debarch}
           Maintainer: Kubernetes Authors <dev@kubernetes.io>
-          Description: ${PKG_NAME} - Kubernetes component
-           Kubernetes component: ${PKG_NAME}.
-          CTRL
+          Description: ${PKG} - Kubernetes component
+           Kubernetes component: ${PKG}.
+          EOF
 
-          # Add conffiles for config files
-          CONFFILE="${BUILD_DIR}/DEBIAN/conffiles"
-          if [[ "${PKG_NAME}" == "kubelet" ]]; then
-            echo "/etc/default/kubelet" >> "${CONFFILE}"
+            # ── maintainer scripts ───────────────────────────────
+            if [ "${PKG}" = "kubelet" ]; then
+              cat > "${BUILD_DIR}/DEBIAN/postinst" << 'SH'
+          #!/bin/sh
+          set -e
+          if [ -d /run/systemd/system ] && [ -x /bin/systemctl ]; then
+            systemctl daemon-reload 2>/dev/null || true
           fi
+          SH
+              cat > "${BUILD_DIR}/DEBIAN/prerm" << 'SH'
+          #!/bin/sh
+          set -e
+          if [ -d /run/systemd/system ] && [ -x /bin/systemctl ]; then
+            systemctl stop kubelet.service 2>/dev/null || true
+            systemctl disable kubelet.service 2>/dev/null || true
+          fi
+          SH
+              chmod 755 "${BUILD_DIR}/DEBIAN/postinst" "${BUILD_DIR}/DEBIAN/prerm"
+            fi
 
-          # Build the .deb
-          DEB_FILE="${PKG_NAME}_${DEB_VERSION}_${ARCH}.deb"
-          dpkg-deb --build "${BUILD_DIR}" "/tmp/${DEB_FILE}"
+            # ── build ────────────────────────────────────────────
+            mkdir -p /tmp/debs
+            dpkg-deb --build "${BUILD_DIR}" "/tmp/debs/${PKG}_${VER}-${REV}_${debarch}.deb"
 
-          mkdir -p /tmp/deb-output/
-          cp -v "/tmp/${DEB_FILE}" /tmp/deb-output/
-          ls -lh /tmp/deb-output/
+            echo "::endgroup::"
+          done
 
-      - name: Upload DEB artifacts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          echo "=== DEBs ==="
+          ls -lh /tmp/debs/
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.package }}-${{ inputs.version }}-deb
-          path: /tmp/deb-output/
+          path: /tmp/debs/
